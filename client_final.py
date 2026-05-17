@@ -1,7 +1,7 @@
 import socket
 
 HOST = "127.0.0.1"
-PORT = 59476  # Default ds-server port; change if using university servers
+PORT = 50000  # Default ds-server port; change if using university servers
 
 buf = ""  # Global buffer for reading lines from the server
 
@@ -13,7 +13,8 @@ def rline(sock):
     """Read one complete newline-terminated line from ds-server."""
     global buf
     while "\n" not in buf:
-        buf += sock.recv(4096).decode()
+        chunk = sock.recv(4096).decode()
+        buf += chunk
     line, buf = buf.split("\n", 1)
     return line.strip()
 
@@ -82,7 +83,7 @@ def pick_server(servers, job_cores):
     tier4 = []  # Active but queued (must wait for a running job to finish)
 
     for s in servers:
-        state       = s[2]
+        state       = s[3]
         avail_cores = int(s[4])
 
         if state == "active":
@@ -132,10 +133,12 @@ def main():
 
     # --- Handshake ---
     send(sock, "HELO")
-    rline(sock)                    # Receive: OK
+    r = rline(sock)                    # Receive: OK
+
 
     send(sock, "AUTH Ben & Sushi")
-    rline(sock)                    # Receive: OK
+    r = rline(sock)                    # Receive: OK
+
 
     # --- Main scheduling loop ---
     while True:
@@ -154,10 +157,10 @@ def main():
             # A new job has been submitted and needs to be scheduled
             # JOBN format: JOBN submitTime jobID estRunTime cores mem disk
             #              [0]  [1]         [2]   [3]        [4]   [5] [6]
-            job_id    = int(parts[2])  # Unique job ID
-            job_cores = int(parts[4])  # CPU cores required
-            job_mem   = int(parts[5])  # Memory required (MB)
-            job_disk  = int(parts[6])  # Disk required (MB)
+            job_id    = int(parts[1])  # Unique job ID
+            job_cores = int(parts[3])  # CPU cores required
+            job_mem   = int(parts[4])  # Memory required (MB)
+            job_disk  = int(parts[5])  # Disk required (MB)
 
             # Query all servers capable of running this job (sufficient total resources)
             servers = gets_query(sock, f"GETS Capable {job_cores} {job_mem} {job_disk}")

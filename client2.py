@@ -1,7 +1,7 @@
 import socket
 
 HOST = "127.0.0.1"
-PORT = 59476  # Default ds-server port; change to your unique port on uni servers
+PORT = 50000  # Default ds-server port; change to your unique port on uni servers
 
 buf = ""
 
@@ -50,9 +50,9 @@ def main():
             #              parts[0]  [1]      [2]    [3]       [4]   [5]    [6]
             # BUG FIX: was parts[1] for job_id — that's submitTime, not jobID
             job_id = int(parts[2])
-            cores  = int(parts[4])
-            mem    = int(parts[5])
-            disk   = int(parts[6])
+            cores  = int(parts[3])
+            mem    = int(parts[4])
+            disk   = int(parts[5])
 
             # Ask server for all capable servers for this job's resource requirements
             send(sock, f"GETS Capable {cores} {mem} {disk}")
