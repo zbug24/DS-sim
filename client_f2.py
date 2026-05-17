@@ -62,86 +62,76 @@ def gets_query(sock, query):
  
     return servers
  
-def pick_server(servers, job_cores):
+def pick_server(servers, job_cores, job_runtime):
     """
-    Choose the best server for a job to minimise turnaround time.
- 
-    Classifies each capable server into one of four tiers based on how
-    soon it can start the job, then picks the best within the top tier.
- 
-    Server state values: "active", "booting", "inactive", "unavailable"
- 
-    Tier 1 - Active, enough free cores, no waiting queue.
-             Job starts immediately. Pick tightest fit (smallest surplus
-             cores) to preserve large servers for future large jobs.
- 
-    Tier 2 - Booting, enough free cores, no waiting queue.
-             Server almost ready, job starts very soon after boot.
-             Pick tightest fit.
- 
-    Tier 3 - Inactive, enough total cores.
-             Server needs to boot (~60s) but will then be fully free.
-             Pick smallest server that fits the job.
- 
-    Tier 4 - Active but busy (queue or not enough free cores).
-             Job must wait behind running jobs.
-             Pick server with fewest waiting jobs to minimise queue wait.
- 
-    This is the Best-Fit First Available (BFFA) algorithm.
+    Improved BFFA scheduler.
+
+    Main improvement:
+    - Treats 'idle' servers as immediately available.
+    - Uses server cost as a tie-breaker to reduce rental cost.
+    - Uses job runtime and queue length to avoid long waits.
     """
-    tier1 = []  # Active, free, no queue   -> start now
-    tier2 = []  # Booting, free, no queue  -> start after boot completes
-    tier3 = []  # Inactive                 -> start after cold boot
-    tier4 = []  # Active but queued/busy   -> start after queue clears
- 
+
+    tier1 = []  # active/idle, enough free cores, no queue
+    tier2 = []  # booting, enough free cores, no queue
+    tier3 = []  # inactive
+    tier4 = []  # busy/queued
+
     for s in servers:
-        state        = s[3]
-        avail_cores  = int(s[5])
+        server_type = s[0]
+        server_id = int(s[1])
+        hourly_rate = float(s[2])
+        state = s[3]
+        avail_cores = int(s[5])
         waiting_jobs = int(s[8])
- 
-        if state == "active":
+        running_jobs = int(s[9])
+
+        if state in ("active", "idle"):
             if avail_cores >= job_cores and waiting_jobs == 0:
-                # Immediately available - best-fit by surplus cores
                 surplus = avail_cores - job_cores
-                tier1.append((surplus, s))
+
+                # Lower is better:
+                # 1. tight fit
+                # 2. cheaper server
+                # 3. fewer running jobs
+                tier1.append((surplus, hourly_rate, running_jobs, server_id, s))
             else:
-                # Busy or queued - sort by queue length
-                tier4.append((waiting_jobs, s))
- 
+                queue_score = waiting_jobs * job_runtime + running_jobs * (job_runtime * 0.5)
+                tier4.append((queue_score, hourly_rate, server_id, s))
+
         elif state == "booting":
             if avail_cores >= job_cores and waiting_jobs == 0:
-                # Will be ready soon - best-fit by surplus cores
                 surplus = avail_cores - job_cores
-                tier2.append((surplus, s))
+
+                # Booting server is not as good as idle/active, but better than cold boot.
+                tier2.append((surplus, hourly_rate, running_jobs, server_id, s))
             else:
-                tier4.append((waiting_jobs, s))
- 
+                queue_score = waiting_jobs * job_runtime + running_jobs * (job_runtime * 0.5)
+                tier4.append((queue_score, hourly_rate, server_id, s))
+
         elif state == "inactive":
             if avail_cores >= job_cores:
-                # Needs cold boot - prefer smallest server that fits
-                tier3.append((avail_cores, s))
- 
-    # Tier 1: start immediately, tightest fit
+                surplus = avail_cores - job_cores
+
+                # For inactive servers, avoid unnecessarily expensive servers.
+                tier3.append((surplus, hourly_rate, server_id, s))
+
     if tier1:
-        tier1.sort(key=lambda x: x[0])
-        return tier1[0][1]
- 
-    # Tier 2: booting, almost ready, tightest fit
+        tier1.sort(key=lambda x: (x[0], x[1], x[2], x[3]))
+        return tier1[0][4]
+
     if tier2:
-        tier2.sort(key=lambda x: x[0])
-        return tier2[0][1]
- 
-    # Tier 3: inactive, cold boot, smallest server
+        tier2.sort(key=lambda x: (x[0], x[1], x[2], x[3]))
+        return tier2[0][4]
+
     if tier3:
-        tier3.sort(key=lambda x: x[0])
-        return tier3[0][1]
- 
-    # Tier 4: all busy, shortest queue
+        tier3.sort(key=lambda x: (x[0], x[1], x[2]))
+        return tier3[0][3]
+
     if tier4:
-        tier4.sort(key=lambda x: x[0])
-        return tier4[0][1]
- 
-    # Fallback - should never reach here
+        tier4.sort(key=lambda x: (x[0], x[1], x[2]))
+        return tier4[0][3]
+
     return servers[0]
  
 def main():
@@ -182,7 +172,8 @@ def main():
             servers = gets_query(sock, f"GETS Capable {job_cores} {job_mem} {job_disk}")
  
             # Pick the best server using BFFA
-            chosen      = pick_server(servers, job_cores)
+            job_runtime = int(parts[6])
+            chosen = pick_server(servers, job_cores, job_runtime)
             server_type = chosen[0]
             server_id   = chosen[1]
  
